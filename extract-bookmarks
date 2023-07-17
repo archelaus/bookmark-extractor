@@ -1,0 +1,277 @@
+#!/usr/bin/env python
+
+import os
+import json
+import sys
+import datetime
+import argparse
+
+bookmark_file_path = None
+today = datetime.date.today()
+output_file_date = today.strftime("%d_%m_%Y")
+output_file_path = f"bookmarks_{output_file_date}.html"
+
+
+def find_bookmarks_file_in_current_directory():
+    for filename in os.listdir("."): # {{{
+        if filename.lower() == "bookmarks":
+            return os.path.abspath(filename)
+    return None # }}}
+
+
+def get_bookmark_path(browser):
+    default_path = os.path.expanduser(f"~/.config/{browser}/Default/Bookmarks") # {{{
+    if os.path.exists(default_path):
+        return default_path
+
+    return None # }}}
+
+
+def sort_name(val):
+    # {{{
+    return val["name"].lower() # }}}
+
+
+def preorder(tree, depth):
+    depth += 1 # {{{
+    folders = []
+    output = ""
+    if tree:
+        tree.sort(key=sort_name)
+        for item in tree:
+            try:
+                children_count = len(item["children"])
+            except:
+                children_count = 0
+            if children_count > 0:
+                folders.append(item)
+            else:
+                output += '<DD><A HREF="' + item["url"] + '">' + item["name"] + "</A>\n"
+
+        folders.sort(key=sort_name)
+        for folder in folders:
+            output += "<details>\n"
+            output += "<summary><STRONG>" + folder["name"] + "</STRONG></summary>\n"
+            output += "<DL><DD>\n"
+            subtree = folder["children"]
+            output += preorder(subtree, depth)
+            output += "</DL></details>\n"
+    return output # }}}
+
+
+def process_bookmarks_compat(input, output):
+    header = """<!DOCTYPE NETSCAPE-Bookmark-file-1> # {{{
+    <!-- This is an automatically generated file.
+     It will be read and overwritten.
+     DO NOT EDIT! -->
+    <META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+    <TITLE>Bookmarks</TITLE>
+    <H1>Bookmarks</H1>
+    <DL><p>\n"""
+
+    def deeper(array, depth=0, max_depth=False):
+        if max_depth and depth == max_depth:
+            return
+
+        for node in array:
+            if "children" in node:
+                writeIt(
+                    '<DT><H3 ADD_DATE="'
+                    + node["date_added"]
+                    + '" LAST_MODIFIED="'
+                    + node["date_modified"]
+                    + '">'
+                    + node["name"]
+                    + "</H3>",
+                    depth,
+                )
+                writeIt("<DL><p>", depth)
+                deeper(node["children"], depth + 1, max_depth)
+                writeIt("</DL><p>", depth)
+            elif "url" in node:
+                writeIt(
+                    '<DT><A HREF="'
+                    + node["url"]
+                    + '" ADD_DATE="'
+                    + node["date_added"]
+                    + '">'
+                    + node["name"]
+                    + "</A>",
+                    depth,
+                )
+
+    def writeIt(line, depth=0):
+        tab = "    "
+        for i in range(depth):
+            line = tab + line
+
+        outf.write(line + "\n")
+
+    with open(input, "r", encoding="utf8") as inf:
+        with open(output, "w", encoding="utf8") as outf:
+            workingData = json.load(inf)
+            writeIt(header)
+
+            if workingData["roots"]["bookmark_bar"]:
+                writeIt(
+                    '<DT><H3 ADD_DATE="'
+                    + workingData["roots"]["bookmark_bar"]["date_added"]
+                    + '" LAST_MODIFIED="'
+                    + workingData["roots"]["bookmark_bar"]["date_modified"]
+                    + '" PERSONAL_TOOLBAR_FOLDER="true">Bookmarks bar</H3>"'
+                )
+                writeIt("<DL><p>")
+                deeper(workingData["roots"]["bookmark_bar"]["children"], 1, 10)
+                writeIt("</DL><p>")
+
+            if workingData["roots"]["other"]:
+                writeIt(
+                    '<DT><H3 ADD_DATE="'
+                    + workingData["roots"]["other"]["date_added"]
+                    + '" LAST_MODIFIED="'
+                    + workingData["roots"]["other"]["date_modified"]
+                    + '">Other bookmarks</H3>'
+                )
+                writeIt("<DL><p>")
+                deeper(workingData["roots"]["other"]["children"], 1, 10)
+                writeIt("</DL><p>")
+
+            if workingData["roots"]["synced"]:
+                deeper(workingData["roots"]["synced"]["children"], 1, 10)
+                writeIt("</DL><p>")
+
+    print(f"Bookmarks extracted from the browser and saved in '{output_file_path}'.") # }}}
+
+
+def main():
+    # {{{
+    parser = argparse.ArgumentParser(
+        description="A script to extract bookmarks from a Chromium-based browser."
+    )
+    parser.add_argument(
+        "-a",
+        "--automatic",
+        action="store_true",
+        help="Automatically detect the default bookmark file path for your Chromium-based browser.",
+    )
+    parser.add_argument(
+        "-f",
+        "--file",
+        metavar="bookmark_file_path",
+        help="Specify the bookmark file path as an argument.",
+    )
+    parser.add_argument(
+        "-c",
+        "--compatible",
+        action="store_true",
+        help="Flag to indicate using the provided function for compatibility.",
+    )
+
+    args = parser.parse_args()
+
+    if args.automatic:
+        print("Note: Automatic detection only works on Linux")
+        print("Select your Chromium-based browser:")
+        print("1. Brave")
+        print("2. Vivaldi")
+        print("3. Chromium")
+        print("4. Google Chrome")
+        choice = input("Enter the number corresponding to your choice: ")
+
+        if choice == "1":
+            bookmark_file_path = get_bookmark_path("BraveSoftware/Brave-Browser")
+        elif choice == "2":
+            bookmark_file_path = get_bookmark_path("vivaldi")
+        elif choice == "3":
+            bookmark_file_path = get_bookmark_path("chromium")
+        elif choice == "4":
+            bookmark_file_path = get_bookmark_path("google-chrome")
+        else:
+            print("Invalid choice. Please select a valid option (1, 2, 3, or 4).")
+            sys.exit(1)
+    elif args.file:
+        bookmark_file_path = args.file
+        if not os.path.exists(bookmark_file_path):
+            print(f"Error: File not found at the specified path: {bookmark_file_path}")
+            sys.exit(1)
+    else:
+        bookmark_file_path = find_bookmarks_file_in_current_directory()
+        if bookmark_file_path is None:
+            print("Error: Bookmark file not found in the current directory.")
+            print(
+                "Please provide the path to the bookmark file using the '-f' flag, or use '-a' to try automatic detection."
+            )
+            sys.exit(1)
+        else:
+            print(f"Found bookmarks file at: {bookmark_file_path}")
+            proceed = input("Do you want to proceed with this file? (y/n): ")
+            if proceed.lower() != "y":
+                sys.exit(0)
+
+    if args.compatible:
+        if bookmark_file_path:
+            # Call the provided function for compatibility
+            process_bookmarks_compat(bookmark_file_path, output_file_path)
+        else:
+            print("Error: Bookmark file not found.")
+            print("Please provide the path to the bookmark file using the '-f' flag.")
+            print("Usage: python script_name.py -f <bookmark_file_path>")
+            print("Or use '-a' to try automatic detection of the default path.")
+            sys.exit(1)
+        return
+
+    with open(bookmark_file_path, "r", encoding="utf-8") as f:
+        Bookmarks = json.load(f)
+
+    output = "<HTML>\n"
+    output += "<TITLE>Bookmarks</TITLE>"
+    output += """
+    <script>
+    function toggleAll() {
+        var all_dets = document.getElementsByTagName('details');
+        var det_count = all_dets.length;
+        for (let i = 0; i < det_count; i++){
+            if (toggleAll.open) {
+                all_dets[i].setAttribute("open", "true");
+            } else {
+                all_dets[i].removeAttribute("open");
+            }
+        }
+        toggleAll.open = !toggleAll.open;
+        document.getElementById("tog").innerText = toggleAll.open ? "Expand All" : "Collapse All";
+    }
+    toggleAll.open = true;
+    </script>
+    """
+    output += "<BODY>\n"
+    output += f"<H1>Bookmarks ({today.strftime('%d %b %Y')})</H1>\n"
+    output += '<button id="tog" onclick="toggleAll()">Expand All</button>\n'
+    output += "<p></p>\n"
+    output += "<DL>\n"
+    output += "<DT><STRONG>Bookmarks Bar</STRONG>\n"
+    original1 = Bookmarks["roots"]["bookmark_bar"]["children"]
+    output += preorder(original1, 0)
+    output += "</DL>\n"
+    output += "<DL>\n"
+    output += "<DT><STRONG>Other Bookmarks</STRONG>\n"
+    original2 = Bookmarks["roots"]["other"]["children"]
+    output += preorder(original2, 0)
+    output += "</DL>\n"
+    if Bookmarks["roots"]["synced"]["children"]:
+        output += "<DL>\n"
+        output += "<DT><STRONG>Mobile bookmarks</STRONG>\n"
+        original3 = Bookmarks["roots"]["synced"]["children"]
+        output += preorder(original3, 0)
+        output += "</DL>\n"
+    output += "</BODY></HTML>"
+
+    with open(output_file_path, "w", encoding="utf-8") as output_file:
+        output_file.write(output)
+
+    print(f"Bookmarks extracted from the browser and saved in '{output_file_path}'.") # }}}
+
+
+if __name__ == "__main__":
+    main()
+
+# vim:ft=python:fdm=marker
